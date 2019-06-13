@@ -1,6 +1,6 @@
 # Mandelbrot
 An OpenGL program that creates the Mandelbrot set in GLSL.
-Uses [Glutin](https://crates.io/crates/glutin)/[Winit](https://crates.io/crates/winit) for window management.
+Uses [Glutin](https://crates.io/crates/glutin)/[Winit](https://crates.io/crates/winit) for window management and [gl](https://crates.io/crates/gl) for function loading.
 
 # Controls
 * `A/D/S/W`: move around
