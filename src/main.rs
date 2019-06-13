@@ -47,7 +47,7 @@ fn load_single_shader(source: &CStr, shader_type: GLenum) -> Result<GLuint, Stri
             let mut buffer: Vec<u8> = Vec::with_capacity(len as usize + 1);
             buffer.extend([b' '].iter().cycle().take(len as usize));
             let error: CString = CString::from_vec_unchecked(buffer);
-            gl::GetShaderInfoLog(shader, 1024, &mut len, error.as_ptr() as *mut GLchar);
+            gl::GetShaderInfoLog(shader, len, &mut len, error.as_ptr() as *mut GLchar);
             return Err(error
                 .into_string()
                 .expect("Error during conversion from shader error message to rust string"));
@@ -58,10 +58,12 @@ fn load_single_shader(source: &CStr, shader_type: GLenum) -> Result<GLuint, Stri
 
 fn load_shader() -> Result<GLuint, String> {
     unsafe {
-        let vertex =
-            load_single_shader(&load_cstring("mandelbrot_vertex.glsl")?, gl::VERTEX_SHADER)?;
+        let vertex = load_single_shader(
+            &load_cstring("shaders/mandelbrot_vertex.glsl")?,
+            gl::VERTEX_SHADER,
+        )?;
         let fragment = load_single_shader(
-            &load_cstring("mandelbrot_fragment.glsl")?,
+            &load_cstring("shaders/mandelbrot_fragment.glsl")?,
             gl::FRAGMENT_SHADER,
         )?;
 
@@ -76,8 +78,15 @@ fn load_shader() -> Result<GLuint, String> {
         let mut success = 0;
         gl::GetProgramiv(program, gl::LINK_STATUS, &mut success);
         if success == 0 {
-            // TODO: exact error message
-            Err("Unable to link shader programs".to_string())
+            let mut len: gl::types::GLint = 0;
+            gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &mut len);
+            let mut buffer: Vec<u8> = Vec::with_capacity(len as usize + 1);
+            buffer.extend([b' '].iter().cycle().take(len as usize));
+            let error: CString = CString::from_vec_unchecked(buffer);
+            gl::GetProgramInfoLog(program, len, &mut len, error.as_ptr() as *mut GLchar);
+            return Err(error
+                .into_string()
+                .expect("Error during conversion from shader error message to rust string"));
         } else {
             Ok(program)
         }
@@ -85,13 +94,8 @@ fn load_shader() -> Result<GLuint, String> {
 }
 
 fn create_vao() -> (GLuint, GLuint) {
-    // let vertices: [f32; 18] = [
-    //     -1.0, 1.0, 0.0, -1.0, -1.0, 0.0, 1.0, -1.0, 0.0, -1.0, 1.0, 0.0, 1.0, -1.0, 0.0, 1.0, 1.0,
-    //     0.0,
-    // ];
-    let vertices: [f32; 18] = [
-        -2.0, 1.0, 0.0, -2.0, -1.0, 0.0, 1.0, -1.0, 0.0, -2.0, 1.0, 0.0, 1.0, -1.0, 0.0, 1.0, 1.0,
-        0.0,
+    let vertices: [f32; 12] = [
+        -2.0, 1.0, -2.0, -1.0, 1.0, -1.0, -2.0, 1.0, 1.0, -1.0, 1.0, 1.0,
     ];
     let mut vbo: GLuint = 0;
     unsafe {
@@ -109,10 +113,10 @@ fn create_vao() -> (GLuint, GLuint) {
         gl::BindVertexArray(vao);
         gl::VertexAttribPointer(
             0,
-            3,
+            2,
             gl::FLOAT,
             gl::FALSE,
-            3 * std::mem::size_of::<f32>() as i32,
+            2 * std::mem::size_of::<f32>() as i32,
             std::ptr::null(),
         );
         gl::EnableVertexAttribArray(0);
