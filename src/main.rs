@@ -3,6 +3,7 @@ use gl::types::*;
 use glutin::{Api, GlProfile, GlRequest};
 use std::ffi::{CStr, CString};
 use std::fs;
+use std::time::Instant;
 use winit::{
     DeviceEvent, ElementState, Event, EventsLoop, MouseScrollDelta, VirtualKeyCode, WindowBuilder,
     WindowEvent,
@@ -16,6 +17,15 @@ fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> [
     matrix[3][1] = -((top + bottom) / (top - bottom));
     matrix[2][2] = -2.0 / (far - near);
     matrix[3][2] = -((far + near) / (far - near));
+    matrix[3][3] = 1.0;
+    matrix
+}
+
+fn scale(factor: f32) -> [[f32; 4]; 4] {
+    let mut matrix = [[0.0; 4]; 4];
+    matrix[0][0] = factor;
+    matrix[1][1] = factor;
+    matrix[2][2] = factor;
     matrix[3][3] = 1.0;
     matrix
 }
@@ -93,9 +103,20 @@ fn load_shader() -> Result<GLuint, String> {
     }
 }
 
-fn create_vao() -> (GLuint, GLuint) {
+fn create_vao(width: f32, height: f32) -> (GLuint, GLuint) {
     let vertices: [f32; 12] = [
-        -2.0, 1.0, -2.0, -1.0, 1.0, -1.0, -2.0, 1.0, 1.0, -1.0, 1.0, 1.0,
+        -width / 2.0,
+        height / 2.0,
+        -width / 2.0,
+        -height / 2.0,
+        width / 2.0,
+        -height / 2.0,
+        -width / 2.0,
+        height / 2.0,
+        width / 2.0,
+        -height / 2.0,
+        width / 2.0,
+        height / 2.0,
     ];
     let mut vbo: GLuint = 0;
     unsafe {
@@ -161,11 +182,12 @@ fn render() {
 }
 
 fn main() -> Result<(), String> {
+    let (width, height): (f32, f32) = (1200.0, 800.0);
     let mut events_loop = EventsLoop::new();
     let wb = WindowBuilder::new()
         .with_title("Mandelbrot Renderer")
         .with_dimensions(glutin::dpi::LogicalSize::from_physical(
-            glutin::dpi::PhysicalSize::new(1200.0, 800.0),
+            glutin::dpi::PhysicalSize::new(width as f64, height as f64),
             1.0,
         ));
     let winodw_context = glutin::ContextBuilder::new()
@@ -182,7 +204,7 @@ fn main() -> Result<(), String> {
         gl::ClearColor(0.2, 0.3, 0.3, 1.0);
     };
     let shader_program = load_shader()?;
-    let (vbo, vao) = create_vao();
+    let (vbo, vao) = create_vao(width, height);
     unsafe {
         gl::UseProgram(shader_program);
         gl::BindVertexArray(vao);
@@ -191,10 +213,18 @@ fn main() -> Result<(), String> {
     let mut current_iterations = 200;
     set_uniform_int(iteration_location, current_iterations);
 
-    let matrix_location = get_uniform_location(shader_program, "ortho".to_string());
-    let (mut left, mut right, mut top, mut bottom, mut zoom_factor) =
-        (-2.0, 1.0, -1.0, 1.0, 1000.0);
-    set_uniform_mat4(matrix_location, ortho(left, right, top, bottom, 1.0, -1.0));
+    let ortho_location = get_uniform_location(shader_program, "ortho".to_string());
+    set_uniform_mat4(
+        ortho_location,
+        ortho(
+            -width / 2.0,
+            width / 2.0,
+            height / 2.0,
+            -height / 2.0,
+            1.0,
+            -1.0,
+        ),
+    );
 
     let mut left_click = false;
     let (mut x_position, mut y_position): (f32, f32) = (0.0, 0.0);
@@ -202,106 +232,123 @@ fn main() -> Result<(), String> {
     let mut zoomed_last_frame = false;
     set_uniform_float2(pos_position, x_position, y_position);
 
+    let mut scale_factor = 1.0;
+    let scale_position = get_uniform_location(shader_program, "scale".to_string());
+    set_uniform_mat4(scale_position, scale(scale_factor));
+
+    // Draw the first frame (because of optimizations with changed)
+    render();
+    context.swap_buffers().unwrap();
+
     let mut shoud_not_close = true;
+    let mut focused = true;
     while shoud_not_close {
-        events_loop.poll_events(|event| match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                shoud_not_close = false;
-            }
-            Event::DeviceEvent {
-                event: DeviceEvent::Key(key),
-                ..
-            } => {
-                if key.state == ElementState::Pressed {
-                    match key.virtual_keycode {
-                        Some(VirtualKeyCode::Up) => {
-                            current_iterations += 10;
-                            set_uniform_int(iteration_location, current_iterations);
-                            println!("Current iterations: {}", current_iterations);
+        let mut changed = false;
+        let start = Instant::now();
+        if focused {
+            events_loop.poll_events(|event| match event {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
+                    shoud_not_close = false;
+                }
+                Event::WindowEvent {
+                    event: WindowEvent::Focused(is_focused),
+                    ..
+                } => {
+                    focused = is_focused;
+                }
+                Event::DeviceEvent {
+                    event: DeviceEvent::Key(key),
+                    ..
+                } => {
+                    if key.state == ElementState::Pressed {
+                        match key.virtual_keycode {
+                            Some(VirtualKeyCode::Up) => {
+                                current_iterations += 10;
+                                set_uniform_int(iteration_location, current_iterations);
+                                changed = true;
+                                println!("Current iterations: {}", current_iterations);
+                            }
+                            Some(VirtualKeyCode::Down) => {
+                                current_iterations -= 10;
+                                set_uniform_int(iteration_location, current_iterations);
+                                changed = true;
+                                println!("Current iterations: {}", current_iterations);
+                            }
+                            Some(VirtualKeyCode::Escape) => {
+                                shoud_not_close = false;
+                            }
+                            _ => {}
                         }
-                        Some(VirtualKeyCode::Down) => {
-                            current_iterations -= 10;
-                            set_uniform_int(iteration_location, current_iterations);
-                            println!("Current iterations: {}", current_iterations);
-                        }
-                        Some(VirtualKeyCode::Escape) => {
-                            shoud_not_close = false;
-                        }
-                        Some(VirtualKeyCode::A) => {
-                            x_position += 1.0 / (zoom_factor);
-                            set_uniform_float2(pos_position, x_position, y_position);
-                        }
-                        Some(VirtualKeyCode::D) => {
-                            x_position -= 1.0 / (zoom_factor);
-                            set_uniform_float2(pos_position, x_position, y_position);
-                        }
-                        Some(VirtualKeyCode::W) => {
-                            y_position -= 1.0 / (zoom_factor);
-                            set_uniform_float2(pos_position, x_position, y_position);
-                        }
-                        Some(VirtualKeyCode::S) => {
-                            y_position += 1.0 / (zoom_factor);
-                            set_uniform_float2(pos_position, x_position, y_position);
-                        }
-                        _ => {}
                     }
                 }
-            }
-            Event::DeviceEvent {
-                event:
-                    DeviceEvent::MouseWheel {
-                        delta: MouseScrollDelta::LineDelta(_, y),
-                    },
-                ..
-            } => {
-                if y < 0.0 {
-                    left *= 1.01;
-                    right *= 1.01;
-                    top *= 1.01;
-                    bottom *= 1.01;
-                    zoom_factor *= 1.0001;
-                } else {
-                    left /= 1.01;
-                    right /= 1.01;
-                    top /= 1.01;
-                    bottom /= 1.01;
-                    zoom_factor /= 1.0001;
+                Event::DeviceEvent {
+                    event:
+                        DeviceEvent::MouseWheel {
+                            delta: MouseScrollDelta::LineDelta(_, y),
+                        },
+                    ..
+                } => {
+                    if y > 0.0 {
+                        scale_factor *= 1.01;
+                        set_uniform_mat4(scale_position, scale(scale_factor));
+                    } else {
+                        scale_factor /= 1.01;
+                        set_uniform_mat4(scale_position, scale(scale_factor));
+                    }
+                    changed = true;
+                    zoomed_last_frame = true;
                 }
-                zoomed_last_frame = true;
-                set_uniform_mat4(matrix_location, ortho(left, right, top, bottom, 1.0, -1.0));
-            }
-            Event::DeviceEvent {
-                event: DeviceEvent::Button { button: 1, state },
-                ..
-            } => {
-                if state == ElementState::Pressed {
-                    left_click = true;
-                } else {
-                    left_click = false;
+                Event::DeviceEvent {
+                    event: DeviceEvent::Button { button: 1, state },
+                    ..
+                } => {
+                    if state == ElementState::Pressed {
+                        left_click = true;
+                    } else {
+                        left_click = false;
+                    }
                 }
-            }
-            Event::DeviceEvent {
-                event: DeviceEvent::MouseMotion { delta },
-                ..
-            } => {
-                if left_click {
-                    x_position += delta.0 as f32 / zoom_factor;
-                    y_position -= delta.1 as f32 / zoom_factor;
-                    set_uniform_float2(pos_position, x_position, y_position);
+                Event::DeviceEvent {
+                    event: DeviceEvent::MouseMotion { delta },
+                    ..
+                } => {
+                    if left_click {
+                        x_position += delta.0 as f32 / scale_factor;
+                        y_position += delta.1 as f32 / scale_factor;
+                        set_uniform_float2(pos_position, x_position, y_position);
+                        changed = true;
+                    }
                 }
-            }
-            _ => {
-                zoomed_last_frame = false;
-            }
-        });
-        render();
-        context.swap_buffers().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(33));
-    }
+                _ => {
+                    zoomed_last_frame = false;
+                }
+            });
+        } else {
+            events_loop.poll_events(|event| {
+                if let Event::WindowEvent {
+                    event: window_event,
+                    ..
+                } = event
+                {
+                    if let WindowEvent::Focused(new_focused) = window_event {
+                        focused = new_focused;
+                    }
+                }
+            })
+        }
 
+        let elapsed = start.elapsed();
+        if changed {
+            render();
+            context.swap_buffers().unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            16 - elapsed.as_millis() as u64,
+        ));
+    }
     unsafe {
         gl::DeleteProgram(shader_program);
         gl::DeleteVertexArrays(1, &vao);
